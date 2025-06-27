@@ -1,7 +1,5 @@
 #include "gsc.h"
 
-extern cvar_t *player_sprintTime;
-
 void gsc_player_setvelocity(scr_entref_t ref)
 {
     int id = ref.entnum;
@@ -420,7 +418,7 @@ void gsc_player_setgravity(scr_entref_t ref)
 
     Scr_AddBool(qtrue);
 }
-
+/*
 void gsc_player_getfps(scr_entref_t ref)
 {
     int id = ref.entnum;
@@ -434,7 +432,7 @@ void gsc_player_getfps(scr_entref_t ref)
 
     Scr_AddInt(customPlayerState[id].fps);
 }
-
+*/
 void gsc_player_isonladder(scr_entref_t ref)
 {
     int id = ref.entnum;
@@ -550,126 +548,6 @@ void gsc_player_connectionlesspackettoclient(scr_entref_t ref)
     Scr_AddBool(qtrue);
 }
 
-void gsc_player_setjumpheight(scr_entref_t ref)
-{
-    int id = ref.entnum;
-    float jump_height;
-
-    if (!stackGetParams("f", &jump_height))
-    {
-        stackError("gsc_player_setjumpheight() argument is undefined or has a wrong type");
-        Scr_AddUndefined();
-        return;
-    }
-
-    if (id >= MAX_CLIENTS)
-    {
-        stackError("gsc_player_setjumpheight() entity %i is not a player", id);
-        Scr_AddUndefined();
-        return;
-    }
-
-    if(jump_height < 0)
-        customPlayerState[id].overrideJumpHeight = false;
-    else
-    {
-        customPlayerState[id].overrideJumpHeight = true;
-        customPlayerState[id].jumpHeight = jump_height;
-    }
-
-    Scr_AddBool(qtrue);
-}
-
-void gsc_player_setairjumps(scr_entref_t ref)
-{
-    int id = ref.entnum;
-    int airJumps;
-
-    if (!stackGetParams("i", &airJumps))
-    {
-        stackError("gsc_player_setairjumps() argument is undefined or has a wrong type");
-        Scr_AddUndefined();
-        return;
-    }
-
-    if (id >= MAX_CLIENTS)
-    {
-        stackError("gsc_player_setairjumps() entity %i is not a player", id);
-        Scr_AddUndefined();
-        return;
-    }
-
-    customPlayerState[id].airJumpsAvailable = airJumps;
-
-    Scr_AddBool(qtrue);
-}
-
-void gsc_player_getairjumps(scr_entref_t ref)
-{
-    int id = ref.entnum;
-
-    if (id >= MAX_CLIENTS)
-    {
-        stackError("gsc_player_getairjumps() entity %i is not a player", id);
-        Scr_AddUndefined();
-        return;
-    }
-
-    Scr_AddInt(customPlayerState[id].airJumpsAvailable);
-}
-
-void gsc_player_disableitemautopickup(scr_entref_t ref)
-{
-    int id = ref.entnum;
-
-    if (id >= MAX_CLIENTS)
-    {
-        stackError("gsc_player_disableitempickup() entity %i is not a player", id);
-        Scr_AddUndefined();
-        return;
-    }
-
-    int old_setting = !customPlayerState[id].noAutoPickup;
-    customPlayerState[id].noAutoPickup = true;
-
-    Scr_AddInt(old_setting);
-}
-
-void gsc_player_enableitemautopickup(scr_entref_t ref)
-{
-    int id = ref.entnum;
-
-    if (id >= MAX_CLIENTS)
-    {
-        stackError("gsc_player_enableitempickup() entity %i is not a player", id);
-        Scr_AddUndefined();
-        return;
-    }
-
-    int old_setting = !customPlayerState[id].noAutoPickup;
-    customPlayerState[id].noAutoPickup = false;
-
-    Scr_AddInt(old_setting);
-}
-
-void gsc_player_getsprintremaining(scr_entref_t ref)
-{
-    int id = ref.entnum;
-
-    if (id >= MAX_CLIENTS)
-    {
-        stackError("gsc_player_getsprintremaining() entity %i is not a player", id);
-        Scr_AddUndefined();
-        return;
-    }
-    
-    float sprint_time = player_sprintTime->value * 1000.0;
-    int timeUsed = customPlayerState[id].sprintTimer;
-    int timeRemaining = sprint_time - timeUsed;
-    
-    Scr_AddInt(timeRemaining);
-}
-
 void gsc_player_playscriptanimation(scr_entref_t ref)
 {
     int id = ref.entnum;
@@ -717,34 +595,4 @@ void gsc_player_isbot(scr_entref_t ref)
     client_t *client = &svs.clients[id];
 
     Scr_AddBool(client->bIsTestClient);
-}
-void gsc_player_sethiddenfromscoreboard(scr_entref_t ref)
-{
-    int id = ref.entnum;
-
-    if (id >= MAX_CLIENTS)
-    {
-        stackError("gsc_player_sethiddenfromscoreboard() entity %i is not a player", id);
-        Scr_AddUndefined();
-        return;
-    }
-
-    bool hidden = Scr_GetInt(0);
-    customPlayerState[id].hiddenFromScoreboard = hidden;
-
-    Scr_AddBool(true);
-}
-
-void gsc_player_ishiddenfromscoreboard(scr_entref_t ref)
-{
-    int id = ref.entnum;
-
-    if (id >= MAX_CLIENTS)
-    {
-        stackError("gsc_player_ishiddenfromscoreboard() entity %i is not a player", id);
-        Scr_AddUndefined();
-        return;
-    }
-
-    Scr_AddBool(customPlayerState[id].hiddenFromScoreboard);
 }

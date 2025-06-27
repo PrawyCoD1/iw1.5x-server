@@ -80,6 +80,7 @@
 #define PMF_CROUCH      0x2
 #define PMF_LADDER      0x10
 #define PMF_SLIDING     0x100
+#define PMF_JUMPING         0x2000
 
 typedef void (*xcommand_t)(void);
 
@@ -493,21 +494,17 @@ typedef struct entityState_s
     float fWaistPitch;
 } entityState_t;
 
-typedef struct
-{
-    byte gap[4];
-    int svFlags;
-    int singleClient;
-    byte gap2[4];
-    vec3_t mins;
-    vec3_t maxs;
-    int contents;
-    vec3_t absmin;
-    vec3_t absmax;
-    vec3_t currentOrigin;
-    vec3_t currentAngles;
-    int ownerNum;
-    int eventTime;
+typedef struct {
+    byte linked;              // 0x00
+    byte gap_0x1[3];          // 0x01 - 0x03
+    int singleClient;         // 0x04 - 0x07
+    byte svFlags;             // 0x08
+    byte gap_0x9[0xB];        // 0x09 - 0x13 (used to be 0xF, now 0xB)
+    vec3_t mins;              // 0x14 - 0x1F
+    vec3_t maxs;              // 0x20 - 0x2B
+    byte gap_0x2C[0x0C];      // 0x2C - 0x37
+    int contents;             // 0x38 - 0x3B
+    byte gap_0x3C[0x30];      // 0x3C - 0x6B
 } entityShared_t;
 
 typedef struct objective_s
@@ -624,7 +621,7 @@ typedef struct playerState_s
     float crouchSpeedScale;     // 0x358
     float strafeSpeedScale;     // 0x35C
     float backSpeedScale;       // 0x360
-    byte gap_0x364[4];
+    float leanSpeedScale;       // 0x364
     float proneDirection;       // 0x368
     float proneDirectionPitch;  // 0x36c
     float proneTorsoPitch;      // 0x370
@@ -648,27 +645,36 @@ typedef struct playerState_s
     int shellshockDuration;     // 0x3e4
     objective_t objective[MAX_OBJECTIVES]; // 0x3E8
     hudElemState_t hud;         // 0x5A8
-    int ping;                   // 0x20C8
-    int deltaTime;              // 0x20CC
+    int deltaTime;              // 0x20C8
 } playerState_t;
 
 typedef struct
 {
-    sessionState_t sessionState;
-    int forceSpectatorClient;
-    int statusIcon;
-    int archiveTime;
-    int score;
-    int deaths;
-    byte gap[4];
-    clientConnected_t connected;
-    usercmd_t cmd;
-    usercmd_t oldcmd;
-    qboolean localClient;
-    byte gap2[8];
-    char netname[MAX_NETNAME];
-    int maxHealth;
-    byte gap3[128];
+    int clientIndex;
+    int team;
+    byte gap_0x8[0x54];
+} clientState_t;
+
+typedef struct
+{
+    sessionState_t sessionState;    // 0x0
+    int forceSpectatorClient;       // 0x4
+    int statusIcon;                 // 0x8
+    int archiveTime;                // 0xC
+    int score;                      // 0x10
+    int deaths;                     // 0x14
+    byte gap_0x18[4];
+    clientConnected_t connected;    // 0x1C
+    usercmd_t cmd;                  // 0x20
+    usercmd_t oldcmd;               // 0x38
+    int localClient;                // 0x50
+    int predictItemPickup;          // 0x54
+    byte gap_0x58[0x28];
+    int maxHealth;                  // 0x80
+    byte gap_0x84[0x24];
+    int noSpectate;                 // 0xA8
+    byte gap_0xAC[0x8];
+    clientState_t state;            // 0xB4
 } clientSession_t;
 
 struct gclient_s
@@ -685,11 +691,20 @@ struct gentity_s
 {
     entityState_t s;        // 0x0
     entityShared_t r;       // 0xF0
-    byte gap_0x154[0x4];
-    gclient_t *client;      // 0x158
-    byte gap_0x15C[0x34];
-    int clipmask;           // 0x190
-    byte gap_0x194[0x180];
+    struct gclient_s *client;   // 0x15C
+    byte gap_0x160[0x13];
+    byte watertype;         // 0x173
+    byte waterlevel;        // 0x174
+    byte takedamage;        // 0x175
+    byte gap_0x176[0x6];
+    uint16_t classname;     // 0x17c
+    byte gap_0x17E[0x6];
+    int flags;              // 0x184
+    byte gap_0x188[0x10];
+    int clipmask;           // 0x198
+    byte gap_0x19C[0x84];
+    void (*die)(gentity_s *self, gentity_s *inflictor, gentity_s *attacker, int damage, int meansOfDeath, int iWeapon, const float *vDir, int hitLoc); // 0x220
+    byte gap_0x224[0xF8];
 };
 
 typedef struct
@@ -733,11 +748,11 @@ typedef struct client_s
     int downloadBlockSize[MAX_DOWNLOAD_WINDOW];
     qboolean downloadEOF;
     int downloadSendTime;
-    char			downloadURL[96];
-	qboolean		wwwOk;
-	qboolean		downloadingWWW;
-	qboolean		clientDownloadingWWW;
-	qboolean		wwwFallback;
+    char downloadURL[MAX_OSPATH];
+    qboolean wwwOk;
+    qboolean downloadingWWW;
+    qboolean clientDownloadingWWW;
+    qboolean wwwFallback;
     int deltaMessage;
     int nextReliableTime;
     int lastPacketTime;
@@ -755,8 +770,7 @@ typedef struct client_s
     unsigned short clscriptid;
     int bIsTestClient;
     int serverId;
-    char PBguid[33];
-	char clientPBguid[33];
+    char PBGuid[33];
 } client_t;
 
 typedef struct
@@ -780,15 +794,13 @@ typedef struct
 {
     qboolean initialized;
     int time;
+    int time2;
     int snapFlagServerBit;
     client_t *clients;
-    int numSnapshotEntities;
-    int numSnapshotClients;
-    int nextSnapshotEntities;
-    int nextSnapshotClients;
-    byte gap[0x34];
+    byte gap[0x40];
     int nextHeartbeatTime;
-    challenge_t challenges[MAX_CHALLENGES];
+    int nextStatusResponseTime;
+    challenge_t challenges[MAX_CHALLENGES]; 
     netadr_t redirectAddress;
     netadr_t authorizeAddress;
     int sv_lastTimeMasterServerCommunicated;
@@ -979,35 +991,40 @@ extern gentity_t *g_entities;
 extern stringIndex_t *scr_const;
 
 #define com_frameTime (*((int*)(0x835F4BC)))
-#define fs_searchpaths (*((searchpath_t**)(0x80E8C30)))//Not sure
+#define fs_searchpaths (*((searchpath_t**)(0x80E8C30)))
 #define scrVarPub (*((scrVarPub_t*)(0x8306CB8)))
-#define scrVmPub (*((scrVmPub_t*)(0x82F5944)))
+#define scrVmPub (*((scrVmPub_t*)(0x830acc0)))
 #define sv (*((server_t*)(0x836B820)))
 #define sv_serverId_value (*((int*)(0x83CCD8C)))
-#define svs (*((serverStatic_t*)(0x83CCD80))) //not sure
+#define svs (*((serverStatic_t*)(0x83CCD80)))
 #define com_errorEntered (*((int*)(0x836057C))) ///not sure
 #define gvm (*(vm_t**)(0x80EE804))
 #define msgHuff (*((huffman_t*)(0x8153D20)))
-#define playerStateFields (*((netField_t*)(0x80DC560)))not sure
+#define playerStateFields (*((netField_t*)(0x80DC560)))
 #define entityStateFields (*((netField_t*)(0x80DB860)))
-//#define objectiveFields (*((netField_t*)(0x080de384))) //cant find
-//#define clientStateFields (*((netField_t*)(0x080d2058)))//cant fond 
+#define objectiveFields (*((netField_t*)(0x80e9a80)))
+#define clientStateFields (*((netField_t*)(0x80dbfe0)))
 #define archivedEntityFields (*((netField_t*)(0x80DBB80)))
 #define rcon_lasttime (*((int*)(0x80EE808))) //not sure
+
+#define STR2(x) #x
+#define STR(x) STR2(x)
+#define VALUE(x) STR(x)
+
 // Require structure sizes to match
 #if __GNUC__ >= 6
 static_assert((sizeof(netchan_t) == 32832), "ERROR: netchan_t size is invalid");
 static_assert((sizeof(entityState_t) == 240), "ERROR: entityState_t size is invalid");
 static_assert((sizeof(client_t) == 371124), "ERROR: client_t size is invalid"); //370940 1.1
-static_assert((sizeof(playerState_t) == 8400), "ERROR: playerState_t size is invalid");
-static_assert((sizeof(entityShared_t) == 100), "ERROR: entityShared_t size is invalid");
-static_assert((sizeof(gentity_t) == 788), "ERROR: gentity_t size is invalid");
+static_assert((sizeof(playerState_t) == 8396), "ERROR: playerState_t size is invalid"); //8400 1.1
+static_assert((sizeof(entityShared_t) == 108), "ERROR: entityShared_t size is invalid"); //100 1.1
+static_assert((sizeof(gentity_t) == 796), "ERROR: gentity_t size is invalid"); //788 1.1
 static_assert((sizeof(usercmd_t) == 24), "ERROR: usercmd_t size is invalid");
-static_assert((sizeof(clientSession_t) == 260), "ERROR: clientSession_t size is invalid");
-static_assert((sizeof(gclient_t) == 8900), "ERROR: gclient_t size is invalid");
-static_assert((sizeof(serverStatic_t) == 45188), "ERROR: serverStatic_t size is invalid");
+static_assert((sizeof(clientSession_t) == 272), "ERROR: clientSession_t size is invalid");// 260 1.1
+static_assert((sizeof(gclient_t) == 8908), "ERROR: gclient_t size is invalid"); //8900 1.1
+//static_assert((sizeof(serverStatic_t) == 45188), "ERROR: serverStatic_t size is invalid");
 static_assert((sizeof(netadr_t) == 20), "ERROR: netadr_t size is invalid");
-//static_assert((sizeof(server_t) == 398572), "ERROR: server_t size is invalid");
+static_assert((sizeof(server_t) == 406764), "ERROR: server_t size is invalid"); //398572 1.1, 398636 1.5
 static_assert((sizeof(challenge_t) == 44), "ERROR: challenge_t size is invalid");
 #endif
 
@@ -1056,11 +1073,7 @@ typedef struct customPlayerState_s
     uint64_t frameTime;
     bool overrideJumpHeight;
     int jumpHeight;
-    int airJumpsAvailable;
     bool overrideJumpHeight_air;
-    bool sprintActive;
-    bool sprintRequestPending;
-    int sprintTimer;
     bool noAutoPickup;
     bool hiddenFromScoreboard;
 } customPlayerState_t;

@@ -13,6 +13,11 @@ extern customPlayerState_t customPlayerState[MAX_CLIENTS];
 
 __attribute__ ((naked)) void hook_Jump_Check_Naked();
 __attribute__ ((naked)) void hook_Jump_Check_Naked_2();
+__attribute__ ((naked)) void hook_PM_WalkMove_Naked();
+__attribute__ ((naked)) void hook_PM_SlideMove_Naked();
+void hook_Jump_Check();
+double custom_Jump_GetLandFactor();
+double custom_PM_GetReducedFriction();
 
 xfunction_t Scr_GetCustomFunction(const char **fname, qboolean *fdev);
 xmethod_t Scr_GetCustomMethod(const char **fname, qboolean *fdev);

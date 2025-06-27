@@ -36,6 +36,8 @@ extern ClientCommand_t ClientCommand;
 typedef qboolean (*StuckInClient_t)(gentity_s *self);
 extern StuckInClient_t StuckInClient;
 
+typedef int (*Jump_Check_t)();
+
 //// BG
 typedef int (*BG_GetNumWeapons_t)(void);
 extern BG_GetNumWeapons_t BG_GetNumWeapons;
@@ -288,7 +290,7 @@ typedef qboolean (*NET_CompareBaseAdr_t)(netadr_t a, netadr_t b);
 static const NET_CompareBaseAdr_t NET_CompareBaseAdr = (NET_CompareBaseAdr_t)0x8083DE3;
 
 typedef qboolean (*NET_CompareAdr_t)(netadr_t a, netadr_t b);
-static const NET_CompareAdr_t NET_CompareAdr = (NET_CompareAdr_t)0x808400F; //tbd
+static const NET_CompareAdr_t NET_CompareAdr = (NET_CompareAdr_t)0x808400F;
 ////
 
 //// PM
@@ -558,3 +560,6 @@ extern trap_SetConfigstring_t trap_SetConfigstring;
 
 typedef int (*trap_GetArchivedPlayerState_t)(int clientNum, int *pArchiveTime, playerState_t *ps);
 ////
+
+typedef float (*Jump_Set_t)(float height);
+extern Jump_Set_t Jump_Set;

@@ -31,7 +31,6 @@ vmCvar_t *bg_fallDamageMaxHeight;
 vmCvar_t *bg_fallDamageMinHeight;
 
 // Custom
-cvar_t *airjump_heightScale;
 cvar_t *fs_callbacks;
 cvar_t *fs_callbacks_additional;
 cvar_t *g_deadChat;
@@ -39,7 +38,6 @@ cvar_t *g_debugCallbacks;
 cvar_t *g_playerEject;
 cvar_t *g_resetSlide;
 cvar_t *jump_bounceEnable;
-cvar_t *jump_height;
 cvar_t *sv_botHook;
 cvar_t *sv_connectMessage;
 cvar_t *sv_connectMessageChallenges;
@@ -52,10 +50,8 @@ cvar_t *sv_heartbeatDelay;
 cvar_t *sv_statusShowDeath;
 cvar_t *sv_statusShowTeamScore;
 cvar_t *sv_spectatorNoclip;
-cvar_t *player_sprint;
-cvar_t *player_sprintMinTime;
-cvar_t *player_sprintSpeedScale;
-cvar_t *player_sprintTime;
+cvar_t* jump_slowdownEnable;
+cvar_t *jump_height;
 ////
 
 //// Game lib
@@ -129,7 +125,12 @@ trap_SetConfigstring_t trap_SetConfigstring;
 trap_GetArchivedPlayerState_t trap_GetArchivedPlayerState;
 G_Error_t G_Error;
 Scr_GetPointerType_t Scr_GetPointerType;
+Jump_Set_t Jump_Set;
 ////
+
+// Resume addresses
+uintptr_t resume_addr_PM_WalkMove;
+uintptr_t resume_addr_PM_SlideMove;
 
 //// Callbacks
 int codecallback_startgametype = 0;
@@ -172,7 +173,6 @@ static ucmd_t ucmds[] =
     {"stopdl",          SV_StopDownload_f,       },
     {"donedl",          SV_DoneDownload_f,       },
     {"retransdl",       SV_RetransmitDownload_f, },
-    {"sprint",          UCMD_custom_sprint, },
     {NULL, NULL}
 };
 
@@ -186,7 +186,7 @@ cHook *hook_Com_Init;
 cHook *hook_DeathmatchScoreboardMessage;
 cHook *hook_GScr_LoadGameTypeScript;
 cHook *hook_PM_AirMove;
-//cHook *hook_PM_FlyMove;
+cHook *hook_PM_FlyMove;
 cHook *hook_PmoveSingle;
 cHook *hook_SV_AddOperatorCommands;
 cHook *hook_SV_BeginDownload_f;
@@ -321,7 +321,6 @@ void custom_Com_Init(char *commandLine)
     Cvar_Get("iw1.5x_date", __DATE__, CVAR_SERVERINFO | CVAR_ROM);
 
     // Register and create references
-    airjump_heightScale = Cvar_Get("airjump_heightScale", "1.5", CVAR_ARCHIVE);
     fs_callbacks = Cvar_Get("fs_callbacks", "maps/mp/gametypes/_callbacksetup", CVAR_ARCHIVE);
     fs_callbacks_additional = Cvar_Get("fs_callbacks_additional", "", CVAR_ARCHIVE);
     g_deadChat = Cvar_Get("g_deadChat", "0", CVAR_ARCHIVE);
@@ -329,11 +328,6 @@ void custom_Com_Init(char *commandLine)
     g_playerEject = Cvar_Get("g_playerEject", "1", CVAR_ARCHIVE);
     g_resetSlide = Cvar_Get("g_resetSlide", "0", CVAR_ARCHIVE);
     jump_bounceEnable = Cvar_Get("jump_bounceEnable", "0", CVAR_ARCHIVE | CVAR_SYSTEMINFO);
-    jump_height = Cvar_Get("jump_height", "39.0", CVAR_ARCHIVE);
-    player_sprint = Cvar_Get("player_sprint", "0", CVAR_ARCHIVE);
-    player_sprintMinTime = Cvar_Get("player_sprintMinTime", "1.0", CVAR_ARCHIVE);
-    player_sprintSpeedScale = Cvar_Get("player_sprintSpeedScale", "1.5", CVAR_ARCHIVE);
-    player_sprintTime = Cvar_Get("player_sprintTime", "4.0", CVAR_ARCHIVE);
     sv_botHook = Cvar_Get("sv_botHook", "0", CVAR_ARCHIVE);
     sv_connectMessage = Cvar_Get("sv_connectMessage", "", CVAR_ARCHIVE);
     sv_connectMessageChallenges = Cvar_Get("sv_connectMessageChallenges", "1", CVAR_ARCHIVE);
@@ -346,6 +340,8 @@ void custom_Com_Init(char *commandLine)
     sv_statusShowDeath = Cvar_Get("sv_statusShowDeath", "0", CVAR_ARCHIVE);
     sv_statusShowTeamScore = Cvar_Get("sv_statusShowTeamScore", "0", CVAR_ARCHIVE);
     sv_spectatorNoclip = Cvar_Get("sv_spectatorNoclip", "0", CVAR_ARCHIVE);
+    jump_slowdownEnable =  Cvar_Get("jump_slowdownEnable", "1", CVAR_SYSTEMINFO | CVAR_ARCHIVE);
+    jump_height = Cvar_Get("jump_height", "39.0", CVAR_ARCHIVE);
     ////
 }
 
@@ -427,10 +423,10 @@ void custom_SV_AddOperatorCommands()
     *(int*)&SV_AddOperatorCommands = hook_SV_AddOperatorCommands->from;
     SV_AddOperatorCommands();
     hook_SV_AddOperatorCommands->hook();
-/*
+/* TODO CRASHING
     Cmd_AddCommand("ban", ban);
     Cmd_AddCommand("unban", unban);
-    */ //broken doesnt work
+    */
 }
 
 void custom_SV_PacketEvent(netadr_t from, msg_t *msg)
@@ -982,7 +978,8 @@ void hook_SV_DirectConnect(netadr_t from)
         for (int i = 0; i < MAX_CHALLENGES; i++)
         {
             challenge_t *challenge = &svs.challenges[i];
-            if (NET_CompareAdr(from, challenge->adr))
+
+            if (NET_CompareBaseAdr(from, challenge->adr))
             {
                 if (challenge->challenge == userinfoChallenge)
                 {
@@ -1250,7 +1247,7 @@ void custom_SV_SendClientGameState(client_t *client)
 
     // Restore user-provided rate and snaps after download
     SV_UserinfoChanged(client); //crashing
-    /*
+    
     MSG_Init(&msg, msgBuffer, sizeof(msgBuffer));
     MSG_WriteLong(&msg, client->lastClientCommand);
     SV_UpdateServerCommandsToClient(client, &msg);
@@ -1273,7 +1270,7 @@ void custom_SV_SendClientGameState(client_t *client)
                     If client has cl_allowDownload enabled, but sv_allowDownload is disabled, client will attempt to download anyway, and then fail joining.
                     To fix this, if sv_allowDownload is disabled, write cl_allowDownload disabled on client, in case is enabled.
                     */
-                   /*
+                   
                     csCopy.append("\\cl_allowDownload\\0");
                 }
                 else
@@ -1315,7 +1312,7 @@ void custom_SV_SendClientGameState(client_t *client)
 
     Com_DPrintf("Sending %i bytes in gamestate to client: %i\n", msg.cursize, clientNum);
 
-    SV_SendMessageToClient(&msg, client);*/
+    SV_SendMessageToClient(&msg, client);
 }
 
 scr_error_t scr_errors[MAX_ERROR_BUFFER];
@@ -2343,7 +2340,7 @@ qboolean custom_SV_ClientCommand(client_t *cl, msg_t *msg)
         return qfalse;
     }
     
-    if (!I_strncmp("score", s, 5) || !I_strncmp("mr ", s, 3) || !I_strncmp("userinfo ", s, 9) || !I_strncmp("sprint ", s, 6))
+    if (!I_strncmp("score", s, 5) || !I_strncmp("mr ", s, 3) || !I_strncmp("userinfo ", s, 9))
     {
         floodprotect = qfalse;
     }
@@ -2433,22 +2430,6 @@ void custom_ClientThink(int clientNum)
     }
 }
 
-void custom_ClientSpawn(gentity_t *ent, const float *spawn_origin, const float *spawn_angles)
-{
-    hook_ClientSpawn->unhook();
-    void (*ClientSpawn)(gentity_t *ent, const float *spawn_origin, const float *spawn_angles);
-    *(int*)&ClientSpawn = hook_ClientSpawn->from;
-    ClientSpawn(ent, spawn_origin, spawn_angles);
-    hook_ClientSpawn->hook();
-
-    int clientNum = ent - g_entities;
-
-    // Reset sprint
-    customPlayerState[clientNum].sprintActive = false;
-    customPlayerState[clientNum].sprintRequestPending = false;
-    customPlayerState[clientNum].sprintTimer = 0;
-}
-
 void custom_ClientEndFrame(gentity_t *ent)
 {
     hook_ClientEndFrame->unhook();
@@ -2466,9 +2447,7 @@ void custom_ClientEndFrame(gentity_t *ent)
 
         if(customPlayerState[clientNum].gravity > 0)
             ent->client->ps.gravity = customPlayerState[clientNum].gravity;
-        
-        if(customPlayerState[clientNum].sprintActive)
-            ent->client->ps.speed *= player_sprintSpeedScale->value;
+;
         
         // Stop slide after fall damage
         if(g_resetSlide->integer)
@@ -2476,7 +2455,7 @@ void custom_ClientEndFrame(gentity_t *ent)
                 ent->client->ps.pm_flags &= ~PMF_SLIDING;
     }
 }
-/*
+
 void custom_PM_FlyMove()
 {
     if (sv_spectatorNoclip->integer)
@@ -2491,7 +2470,7 @@ void custom_PM_FlyMove()
     PM_FlyMove();
     hook_PM_FlyMove->hook();
 }
-*/
+
 
 // See https://github.com/voron00/CoD2rev_Server/blob/b012c4b45a25f7f80dc3f9044fe9ead6463cb5c6/src/bgame/bg_pmove.cpp#L1273
 void PM_ProjectVelocity(const float *velIn, const float *normal, float *velOut)
@@ -2746,108 +2725,9 @@ void custom_PM_CrashLand()
             }
         }
     }
-    
-
-
-    /*int clientNum = (*pm)->ps->clientNum;
-    if (customPlayerState[clientNum].overrideJumpHeight_air)
-    {
-        // Player landed an airjump, disable overrideJumpHeight_air
-        customPlayerState[clientNum].overrideJumpHeight_air = false;
-    }
-    
-    if (codecallback_playercrashland)
-    {
-        gentity_t *gentity = &g_entities[(*pm)->ps->clientNum];
-        short ret = Scr_ExecEntThread(gentity, codecallback_playercrashland, 0);
-        Scr_FreeThread(ret);
-    }*/
 }
 #endif
-////
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-/* See:
-- https://github.com/voron00/CoD2rev_Server/blob/b012c4b45a25f7f80dc3f9044fe9ead6463cb5c6/src/bgame/bg_weapons.cpp#L481
-- CoD4 1.7: 080570ae
-*/
-void PM_UpdateSprint(pmove_t *pmove)
-{
-    int timerMsec;
-    int clientNum;
-    float sprint_time;
-    float sprint_minTime;
-    gentity_t *gentity;
-    client_t *client;
-
-    clientNum = pmove->ps->clientNum;
-    gentity = &g_entities[clientNum];
-    client = &svs.clients[clientNum];
-    sprint_time = player_sprintTime->value * 1000.0;
-    sprint_minTime = player_sprintMinTime->value * 1000.0;
-    
-    if (sprint_time > 0)
-    {
-        if (customPlayerState[clientNum].sprintRequestPending)
-        {
-            if (client->lastUsercmd.forwardmove != KEY_MASK_FORWARD)
-            {
-                customPlayerState[clientNum].sprintRequestPending = false;
-                return;
-            }
-            
-            if ((gentity->client->ps.eFlags & EF_CROUCHING) || (gentity->client->ps.eFlags & EF_PRONE))
-            {
-                G_AddPredictableEvent(gentity, EV_STANCE_FORCE_STAND, 0);
-                return;
-            }
-        }
-        
-        if (customPlayerState[clientNum].sprintActive)
-        {
-            timerMsec = customPlayerState[clientNum].sprintTimer + pml->msec;
-
-            if((gentity->client->ps.eFlags & EF_CROUCHING) || (gentity->client->ps.eFlags & EF_PRONE))
-                customPlayerState[clientNum].sprintActive = false;
-            if(client->lastUsercmd.forwardmove != KEY_MASK_FORWARD)
-                customPlayerState[clientNum].sprintActive = false;
-        }
-        else
-            timerMsec = customPlayerState[clientNum].sprintTimer - pml->msec;
-        
-        if(timerMsec < 0)
-            timerMsec = 0;
-        customPlayerState[clientNum].sprintTimer = timerMsec;
-        
-        if (customPlayerState[clientNum].sprintRequestPending)
-        {
-            if(gentity->s.groundEntityNum == 1023)
-                return; // Player is in air, wait for landing
-            else if(customPlayerState[clientNum].sprintTimer < (sprint_time - sprint_minTime))
-                customPlayerState[clientNum].sprintActive = true; // Allow sprint
-            customPlayerState[clientNum].sprintRequestPending = false;
-        }
-        else if(customPlayerState[clientNum].sprintActive && customPlayerState[clientNum].sprintTimer > sprint_time)
-            customPlayerState[clientNum].sprintActive = false; // Reached max time, disable sprint
-    }
-    else
-    {
-        customPlayerState[clientNum].sprintActive = false;
-        customPlayerState[clientNum].sprintTimer = 0;
-    }
-}
+///
 
 void custom_PmoveSingle(pmove_t *pmove)
 {
@@ -2856,8 +2736,6 @@ void custom_PmoveSingle(pmove_t *pmove)
     *(int*)&PmoveSingle = hook_PmoveSingle->from;
     PmoveSingle(pmove);
     hook_PmoveSingle->hook();
-
-    PM_UpdateSprint(pmove);
 }
 
 void custom_SV_BotUserMove(client_t *client)
@@ -2927,26 +2805,6 @@ void custom_Touch_Item_Auto(gentity_t *item, gentity_t *entity, int touch)
     *(int*)&Touch_Item_Auto = hook_Touch_Item_Auto->from;
     Touch_Item_Auto(item, entity, touch);
     hook_Touch_Item_Auto->hook();
-}
-
-void UCMD_custom_sprint(client_t *cl)
-{
-    int clientNum = cl - svs.clients;
-    if (!player_sprint->integer)
-    {
-        std::string message = "e \"";
-        message += "Sprint is not enabled on this server.";
-        message += "\"";
-        SV_SendServerCommand(cl, SV_CMD_CAN_IGNORE, message.c_str());
-        return;
-    }
-    
-    if(customPlayerState[clientNum].sprintActive)
-        customPlayerState[clientNum].sprintActive = false;
-    else if(customPlayerState[clientNum].sprintRequestPending)
-        customPlayerState[clientNum].sprintRequestPending = false;
-    else
-        customPlayerState[clientNum].sprintRequestPending = true;
 }
 
 void CrashLogger(int sig)
@@ -3092,7 +2950,7 @@ void *custom_Sys_LoadDll(const char *name, char *fqpath, int (**entryPoint)(int,
     PM_ClipVelocity = (PM_ClipVelocity_t)dlsym(libHandle, "PM_ClipVelocity");
     va = (va_t)dlsym(libHandle, "va");
     trap_GetUserinfo = (trap_GetUserinfo_t)dlsym(libHandle, "trap_GetUserinfo");
-    //PM_NoclipMove = (PM_NoclipMove_t)((int)dlsym(libHandle, "_init") + 0x8300);
+    PM_NoclipMove = (PM_NoclipMove_t)((int)dlsym(libHandle, "PM_GetEffectiveStance") + 0x1EA7);
     G_LocalizedStringIndex = (G_LocalizedStringIndex_t)dlsym(libHandle, "G_LocalizedStringIndex");
     trap_SetConfigstring = (trap_SetConfigstring_t)dlsym(libHandle, "trap_SetConfigstring");
     trap_GetArchivedPlayerState = (trap_GetArchivedPlayerState_t)dlsym(libHandle, "trap_GetArchivedPlayerState");
@@ -3105,33 +2963,35 @@ void *custom_Sys_LoadDll(const char *name, char *fqpath, int (**entryPoint)(int,
     - https://aluigi.altervista.org/adv/codmsgboom-adv.txt
     - https://github.com/xtnded/codextended/blob/855df4fb01d20f19091d18d46980b5fdfa95a712/src/librarymodule.c#L146
     */
-    //*(int*)((int)dlsym(libHandle, "G_Say") + 0x50e) = 0x37f; can't find address for that
-    //*(int*)((int)dlsym(libHandle, "G_Say") + 0x5ca) = 0x37f;
+    *(int*)((int)dlsym(libHandle, "CheatsOk") + 0x122) = 0x37f;
     ////
-
-    // Sprint updating
-    hook_PmoveSingle = new cHook((int)dlsym(libHandle, "PmoveSingle"), (int)custom_PmoveSingle);
-    hook_PmoveSingle->hook();
-   
+    
     hook_call((int)dlsym(libHandle, "vmMain") + 0xF0, (int)hook_ClientCommand);
     hook_call((int)dlsym(libHandle, "ClientEndFrame") + 0x37A, (int)hook_StuckInClient);
     hook_call((int)dlsym(libHandle, "_init") + 0x171FE, (int)hook_PM_StepSlideMove_PM_ClipVelocity);
+    hook_call((int)dlsym(libHandle, "PM_GetEffectiveStance") + 0x10B0, (int)hook_Jump_Check);
+
+    Jump_Set = (Jump_Set_t)((int)dlsym(libHandle, "PM_GetEffectiveStance") + 0xEDD);
+    resume_addr_PM_WalkMove = (uintptr_t)dlsym(libHandle, "PM_GetEffectiveStance") + 0x18AA;
+    resume_addr_PM_SlideMove = (uintptr_t)dlsym(libHandle, "PM_SlideMove") + 0xBA5;
 
     hook_jmp((int)dlsym(libHandle, "G_LocalizedStringIndex"), (int)custom_G_LocalizedStringIndex);
     hook_jmp((int)dlsym(libHandle, "va"), (int)custom_va);
+    hook_jmp((int)dlsym(libHandle, "PM_GetEffectiveStance") + 0x16C1, (int)hook_PM_WalkMove_Naked); //UO:sub_24B7C
+    hook_jmp((int)dlsym(libHandle, "PM_SlideMove") + 0xB6A, (int)hook_PM_SlideMove_Naked);
+    hook_jmp((int)dlsym(libHandle, "PM_GetEffectiveStance") + 0xAD, (int)custom_Jump_GetLandFactor);
+    hook_jmp((int)dlsym(libHandle, "PM_GetEffectiveStance") + 0x4C, (int)custom_PM_GetReducedFriction);
     
-    //hook_GScr_LoadGameTypeScript = new cHook((int)dlsym(libHandle, "GScr_LoadGameTypeScript"), (int)custom_GScr_LoadGameTypeScript);
-    //hook_GScr_LoadGameTypeScript->hook();
-    //hook_ClientEndFrame = new cHook((int)dlsym(libHandle, "ClientEndFrame"), (int)custom_ClientEndFrame);//crashing
-    //hook_ClientEndFrame->hook();
-    hook_ClientSpawn = new cHook((int)dlsym(libHandle, "ClientSpawn"), (int)custom_ClientSpawn);
-    hook_ClientSpawn->hook();
-   // hook_ClientThink = new cHook((int)dlsym(libHandle, "ClientThink"), (int)custom_ClientThink); crashing
-    //hook_ClientThink->hook();
-    //hook_Touch_Item_Auto = new cHook((int)dlsym(libHandle, "Touch_Item_Auto"), (int)custom_Touch_Item_Auto);crashing
-    //hook_Touch_Item_Auto->hook();
-    //hook_PM_FlyMove = new cHook((int)dlsym(libHandle, "_init") + 0x79C8, (int)custom_PM_FlyMove);
-    //hook_PM_FlyMove->hook();
+    hook_GScr_LoadGameTypeScript = new cHook((int)dlsym(libHandle, "GScr_LoadGameTypeScript"), (int)custom_GScr_LoadGameTypeScript);
+    hook_GScr_LoadGameTypeScript->hook();
+    hook_ClientEndFrame = new cHook((int)dlsym(libHandle, "ClientEndFrame"), (int)custom_ClientEndFrame);//crashing
+    hook_ClientEndFrame->hook();
+    hook_ClientThink = new cHook((int)dlsym(libHandle, "ClientThink"), (int)custom_ClientThink);
+    hook_ClientThink->hook();
+    hook_Touch_Item_Auto = new cHook((int)dlsym(libHandle, "Touch_Item_Auto"), (int)custom_Touch_Item_Auto);
+    hook_Touch_Item_Auto->hook();
+    hook_PM_FlyMove = new cHook((int)dlsym(libHandle, "PM_GetEffectiveStance") + 0x1354, (int)custom_PM_FlyMove);
+    hook_PM_FlyMove->hook();
     
     return libHandle;
 }
@@ -3143,7 +3003,6 @@ class iw1x
     {
         printf("-------- iw1.5x --------\n");
         printf("Compiled on %s %s using g++ %s and glibc %i.%i\n", __DATE__, __TIME__, __VERSION__, __GLIBC__, __GLIBC_MINOR__);
-
         // Don't inherit lib of parent
         unsetenv("LD_PRELOAD");
 
@@ -3162,35 +3021,28 @@ class iw1x
         // Crash test
         * (int*)nullptr = 1;
 #endif
-
-        // [exploit patch] q3infoboom
-        /* See:
-        - https://aluigi.altervista.org/adv/q3infoboom-adv.txt
-        - https://github.com/xtnded/codextended/blob/855df4fb01d20f19091d18d46980b5fdfa95a712/src/codextended.c#L295
-        */
-        //*(byte*)0x8080269 = 1; //wrong address but imo is correct something else is here not ok
      
         hook_call(0x808943B, (int)hook_AuthorizeState);
-        //hook_call(0x80A0AB4, (int)Scr_GetCustomFunction); crash
-       // hook_call(0x809DB31, (int)Scr_GetCustomMethod); crash
+        hook_call(0x0809d8f5, (int)Scr_GetCustomFunction);
+        hook_call(0x809DB31, (int)Scr_GetCustomMethod); 
         hook_call(0x809370B, (int)hook_SV_DirectConnect);
         hook_call(0x809374E, (int)hook_SV_AuthorizeIpPacket);
         hook_call(0x809360E, (int)hook_SVC_Info);
 
-        //hook_jmp(0x808CDD0, (int)custom_SV_ExecuteClientMessage); //stuck on connecting
-        //hook_jmp(0x808C7A9, (int)custom_SV_ExecuteClientCommand); //crashing 
-        //hook_jmp(0x8098A34, (int)custom_SV_SendClientMessages);
-        //hook_jmp(0x808B8A9, (int)custom_SV_WriteDownloadToClient);
+       // hook_jmp(0x808CDD0, (int)custom_SV_ExecuteClientMessage); //stuck on connecting
+        //hook_jmp(0x808C7A9, (int)custom_SV_ExecuteClientCommand); //freezing game
+        hook_jmp(0x8098A34, (int)custom_SV_SendClientMessages);
+        hook_jmp(0x808B8A9, (int)custom_SV_WriteDownloadToClient);
        // hook_jmp(0x8097A30, (int)custom_SV_SendMessageToClient); //crashing
         hook_jmp(0x80922B1, (int)custom_SV_MasterHeartbeat);
-        //hook_jmp(0x8093A93, (int)custom_SV_PacketEvent);// crashing
-        //hook_jmp(0x808AE44, (int)custom_SV_SendClientGameState);//crashing
-      /*  hook_jmp(0x80889D0, (int)custom_SV_GetChallenge);
+        hook_jmp(0x8093A93, (int)custom_SV_PacketEvent);
+        hook_jmp(0x808AE44, (int)custom_SV_SendClientGameState);
+        //hook_jmp(0x80889D0, (int)custom_SV_GetChallenge);// doesnt let you connect to the server
         hook_jmp(0x8091BEC, (int)custom_SV_CanReplaceServerCommand);
         hook_jmp(0x808C858, (int)custom_SV_ClientCommand);
         hook_jmp(0x80930D0, (int)custom_SVC_RemoteCommand);
         hook_jmp(0x809246E, (int)custom_SVC_Status);
-       */
+       
         hook_Sys_LoadDll = new cHook(0x80D3CDD, (int)custom_Sys_LoadDll);
         hook_Sys_LoadDll->hook();
         hook_Com_Init = new cHook(0x8070EF8, (int)custom_Com_Init);
@@ -3201,8 +3053,8 @@ class iw1x
         hook_SV_BeginDownload_f->hook();
         hook_SV_AddOperatorCommands = new cHook(0x0808877F, (int)custom_SV_AddOperatorCommands);
         hook_SV_AddOperatorCommands->hook();
-       // hook_SV_BotUserMove = new cHook(0x80940D2, (int)custom_SV_BotUserMove); crashing
-       // hook_SV_BotUserMove->hook();
+        hook_SV_BotUserMove = new cHook(0x80940D2, (int)custom_SV_BotUserMove);
+        hook_SV_BotUserMove->hook();
 
         printf("----------------------\n");
     }
