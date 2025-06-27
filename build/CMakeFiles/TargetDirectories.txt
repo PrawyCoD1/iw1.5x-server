@@ -1,0 +1,3 @@
+/home/iw1.5x-server/build/CMakeFiles/iw1.5x.dir
+/home/iw1.5x-server/build/CMakeFiles/edit_cache.dir
+/home/iw1.5x-server/build/CMakeFiles/rebuild_cache.dir
